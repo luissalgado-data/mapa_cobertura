@@ -76,9 +76,12 @@ details ul{margin:4px 0 0;padding-left:16px;max-height:140px;overflow:auto}
   <h2>Capas</h2>
   <label class="row"><input type="checkbox" id="chk-sus" checked><span class="sym"><img src="iconos/sus.svg" alt=""></span>Consultorios SUS<span class="n" id="n-sus"></span></label>
   <label class="row"><input type="checkbox" id="chk-ce" checked><span class="sym"><img src="iconos/cruz.svg" alt="" style="width:16px"></span>Consulta externa<span class="n" id="n-ce"></span></label>
+  <div id="ce-grupos" style="margin:0 0 4px 26px"></div>
+  <label class="row"><input type="checkbox" id="chk-susi" checked><span class="sym"><img src="iconos/sus_issste.svg" alt=""></span>SUS ISSSTE<span class="n" id="n-susi"></span></label>
   <label class="row"><input type="checkbox" id="chk-pil" checked><span class="sym"><span class="pilbox"><img src="iconos/pilares.png" alt=""></span></span>Pilares<span class="n" id="n-pil"></span></label>
   <label class="row"><input type="checkbox" id="chk-mz" checked><span class="sym"><span class="sw" style="background:linear-gradient(90deg,#fdcc8a,#fc8d59,#e34a33,#b30000)"></span></span>Manzanas (mapa de calor)<span class="n" id="n-mz"></span></label>
   <label class="row"><input type="checkbox" id="chk-zon" checked><span class="sym"><span class="sw" style="background:linear-gradient(90deg,#3a9d5d,#f2c53d,#f08a24,#d62828)"></span></span>Zonas de trabajo (semáforo)<span class="n" id="n-zon"></span></label>
+  <label class="row"><input type="checkbox" id="chk-sec"><span class="sym"><span class="sw" style="background:linear-gradient(90deg,#3a9d5d,#f2c53d,#f08a24,#d62828)"></span></span>Secciones (semáforo)<span class="n" id="n-sec"></span></label>
   <div class="hint">Los símbolos aparecen al acercarse; de lejos se ven como puntos.</div>
 
   <h2>Mapa de calor</h2>
@@ -90,6 +93,11 @@ details ul{margin:4px 0 0;padding-left:16px;max-height:140px;overflow:auto}
   <div class="leg" id="legend-zon"></div>
   <div class="params" style="margin-top:8px"><span>Relleno de las zonas</span><input type="range" id="zon-op" min="0" max="60" value="12"></div>
   <div class="hint">Pasa el mouse sobre el mapa para ver el nombre y el semáforo de la zona.</div>
+
+  <h2>Semáforo de secciones</h2>
+  <div class="leg" id="legend-sec"></div>
+  <div class="params" style="margin-top:8px"><span>Relleno de las secciones</span><input type="range" id="sec-op" min="0" max="60" value="20"></div>
+  <div class="hint">Se cargan por alcaldía al activar la capa. Al pasar el mouse sale el número de sección y sus distritos.</div>
 
   <h2>Herramientas de análisis</h2>
   <div class="hint"><b>1.</b> Elige el radio y da clic en cualquier punto del mapa (SUS, consulta externa o Pilar).</div>
@@ -108,10 +116,12 @@ details ul{margin:4px 0 0;padding-left:16px;max-height:140px;overflow:auto}
 <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.min.js"></script>
 <script src="datos/alcaldias.js"></script>
 <script src="datos/sus.js"></script>
+<script src="datos/sus_issste.js"></script>
 <script src="datos/pilares.js"></script>
 <script src="datos/consulta_externa.js"></script>
 <script src="datos/manzanas_centros.js"></script>
 <script src="datos/zonas_semaforo.js"></script>
+<script src="datos/sec/resumen.js"></script>
 <script>
 (function(){
 const $=s=>document.querySelector(s);
@@ -133,7 +143,7 @@ const bases={
 bases['Gris claro'].addTo(map);
 L.control.layers(bases,null,{position:'topright'}).addTo(map);
 L.control.scale({imperial:false}).addTo(map);
-[['pMz',410],['pZon',415],['pDots',430],['pCE',441],['pPil',442],['pSus',443]].forEach(([n,z])=>{map.createPane(n).style.zIndex=z;});
+[['pMz',410],['pZon',415],['pSec',416],['pDots',430],['pCE',441],['pPil',442],['pSus',443]].forEach(([n,z])=>{map.createPane(n).style.zIndex=z;});
 map.getPane('overlayPane').style.zIndex=420;   // círculo y polígonos: sobre las manzanas, bajo los puntos
 
 // ---------- alcaldías ----------
@@ -220,15 +230,23 @@ map.getContainer().appendChild(zhover);
 let zT=0;
 map.on('mousemove',e=>{
   const t=Date.now(); if(t-zT<60) return; zT=t;
-  if(!$('#chk-zon').checked){zhover.style.display='none';return;}
+  if(!$('#chk-zon').checked&&!$('#chk-sec').checked){zhover.style.display='none';return;}
   const x=e.latlng.lng,y=e.latlng.lat; let hit=null;
-  for(const z of ZON){
+  for(const z of ($('#chk-zon').checked?ZON:[])){
     if(!okAlc(z[1])) continue; const b=z[4];
     if(x<b[0]||x>b[2]||y<b[1]||y>b[3]) continue;
     if(z[3].some(poly=>enPoligono(x,y,poly[0]))){hit=z;break;}
   }
-  if(!hit){zhover.style.display='none';return;}
-  zhover.innerHTML=`<b>${esc(hit[0])}</b><br><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${ZCOL[hit[2]]};margin-right:5px"></span>Semáforo: ${ZLAB[hit[2]]}`;
+  let sh=null;
+  if($('#chk-sec').checked){
+    for(const a in secItems){ if(!okAlc(+a)) continue;
+      for(const [l,z] of secItems[a]){ const b=z.bb; if(x<b[0]||x>b[2]||y<b[1]||y>b[3]) continue;
+        if(z[4].some(poly=>enPoligono(x,y,poly[0]))){sh=z;break;} }
+      if(sh) break; }
+  }
+  if(!hit&&!sh){zhover.style.display='none';return;}
+  const dot=c=>`<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${ZCOL[c]};margin-right:5px"></span>`;
+  zhover.innerHTML=(hit?`<b>${esc(hit[0])}</b><br>${dot(hit[2])}Zona · semáforo: ${ZLAB[hit[2]]}`:'')+(hit&&sh?'<hr style="border:0;border-top:1px solid var(--line);margin:4px 0">':'')+(sh?`<b>Sección ${sh[0]}</b> · DF ${sh[1]} · DL ${sh[2]}<br>${dot(sh[3])}Sección · semáforo: ${ZLAB[sh[3]]}`:'');
   zhover.style.left=(e.containerPoint.x+14)+'px'; zhover.style.top=(e.containerPoint.y+14)+'px'; zhover.style.display='block';
 });
 map.on('mouseout',()=>{zhover.style.display='none';});
@@ -243,6 +261,42 @@ function actualizarZonas(){
   leyendaZonas();
 }
 
+// ---------- secciones (semáforo, carga por alcaldía) ----------
+let secOp=.2; const secRend=L.canvas({pane:'pSec',padding:.3}), secGroups={}, secItems={}, secState={}, secRoot=L.layerGroup();
+const secEstilo=c=>({color:ZCOL[c],weight:1.2,opacity:.9,fillColor:ZCOL[c],fillOpacity:secOp});
+function leyendaSecciones(){
+  const cnt=[0,0,0,0,0]; SECR.forEach((r,a)=>{ if(okAlc(a)) r.forEach((n,i)=>cnt[i]+=n); });
+  $('#legend-sec').innerHTML=ZLAB.map((n,i)=>cnt[i]||i<4?`<i style="background:${ZCOL[i]}"></i><span>${n}</span><span class="n">${fmt(cnt[i])}</span>`:'').join('');
+  $('#n-sec').textContent=fmt(cnt.reduce((a,b)=>a+b,0));
+}
+function cargarSec(a){ return new Promise((res,rej)=>{ if(window.SECK&&window.SECK[a]) return res();
+  const sc=document.createElement('script'); sc.src=`datos/sec/${a}.js`; sc.onload=res; sc.onerror=()=>rej(new Error('No se pudo cargar secciones '+a)); document.head.appendChild(sc); }); }
+async function construirSec(a){
+  if(secState[a]==='ok') return; await cargarSec(a);
+  const g=L.layerGroup(), items=[];
+  window.SECK[a].forEach(z=>{
+    const l=L.polygon(z[4].map(poly=>poly.map(r=>r.map(p=>[p[1],p[0]]))),Object.assign({renderer:secRend,pane:'pSec',interactive:false},secEstilo(z[3])));
+    g.addLayer(l); items.push([l,z]);
+    let b=[180,90,-180,-90]; z[4].forEach(poly=>poly[0].forEach(p=>{if(p[0]<b[0])b[0]=p[0];if(p[1]<b[1])b[1]=p[1];if(p[0]>b[2])b[2]=p[0];if(p[1]>b[3])b[3]=p[1];}));
+    z.bb=b;
+  });
+  secGroups[a]=g; secItems[a]=items; secState[a]='ok';
+}
+let secTk=0;
+async function actualizarSecciones(){
+  const tk=++secTk, on=$('#chk-sec').checked;
+  ALC.forEach((_,i)=>{ if(secGroups[i] && !(on&&okAlc(i))) secRoot.removeLayer(secGroups[i]); });
+  if(!on){ if(!$('#load').textContent.startsWith('Cargando manzanas')) $('#load').style.display='none'; return; }
+  const obj=ALC.map((_,i)=>i).filter(okAlc); let h=0;
+  for(const i of obj){
+    if(tk!==secTk) return;
+    $('#load').style.display=''; $('#load').textContent=`Cargando secciones… ${++h}/${obj.length} · ${ALC[i]}`;
+    try{ await construirSec(i); }catch(e){ $('#load').textContent=e.message; return; }
+    if(tk!==secTk) return; secRoot.addLayer(secGroups[i]);
+  }
+  if(tk===secTk) $('#load').style.display='none';
+}
+
 // ---------- puntos con símbolo ----------
 const rendDots=L.canvas({pane:'pDots',padding:.3});   // un solo canvas para todos los puntos, debajo de los símbolos
 function capaSimbolo(o){
@@ -252,15 +306,15 @@ function capaSimbolo(o){
     m.on('click',e=>{L.DomEvent.stopPropagation(e); if(map.pm.globalDrawModeEnabled()) return; analizarCirculo(d,o.ctx);}); };
   o.data.forEach(d=>{
     const ll=[d[1],d[0]];
-    const m=L.marker(ll,{icon:o.icon,pane:o.pane,keyboard:false}); alta(m,d);
-    const c=L.circleMarker(ll,{renderer:rendDots,pane:'pDots',radius:o.dotR,color:'#161a1d',weight:.8,fillColor:o.color,fillOpacity:.95}); alta(c,d);
+    const m=L.marker(ll,{icon:typeof o.icon==='function'?o.icon(d):o.icon,pane:o.pane,keyboard:false}); alta(m,d);
+    const c=L.circleMarker(ll,{renderer:rendDots,pane:'pDots',radius:typeof o.dotR==='function'?o.dotR(d):o.dotR,color:'#161a1d',weight:.8,fillColor:typeof o.color==='function'?o.color(d):o.color,fillOpacity:.95}); alta(c,d);
     marks.push(m); dots.push(c);
   });
   const api={group,enabled:true,refresh(force){
     // actualización incremental: no se quitan los puntos que siguen visibles (así no se cierra un popup abierto)
     const zoom=map.getZoom()>=o.minZoom, b=map.getBounds().pad(.25), want=new Set();
     if(api.enabled) o.data.forEach((d,i)=>{
-      if(!okAlc(d[o.ai])) return;
+      if(!okAlc(d[o.ai])||(o.vis&&!o.vis(d))) return;
       if(zoom){ if(b.contains([d[1],d[0]])) want.add(marks[i]); } else want.add(dots[i]);
     });
     group.eachLayer(l=>{ if(!want.has(l)) group.removeLayer(l); });
@@ -270,16 +324,34 @@ function capaSimbolo(o){
 }
 const ico=(url,s)=>L.icon({iconUrl:url,iconSize:[s,s],iconAnchor:[s/2,s/2],tooltipAnchor:[0,-s/2],className:'simb'});
 const pilIcon=L.divIcon({className:'simb',html:'<div class="pil"><img src="iconos/pilares.png" alt=""></div>',iconSize:[62,24],iconAnchor:[31,12]});
+const GRUPOS=[
+ {n:'IMSS',color:'#1e5b4f',icon:ico('iconos/badge_imss.svg',26),img:'badge_imss.svg'},
+ {n:'ISSSTE',color:'#a57f2c',icon:ico('iconos/badge_issste.svg',26),img:'badge_issste.svg'},
+ {n:'IMSS Bienestar',color:'#9b2247',icon:ico('iconos/badge_bienestar.svg',26),img:'badge_bienestar.svg'},
+ {n:'Secretaría de Salud y otras públicas',color:'#c80000',icon:ico('iconos/badge_publico.svg',24),img:'badge_publico.svg'},
+ {n:'Servicios médicos privados',color:'#98989a',icon:ico('iconos/cruz_privado.svg',13),img:'cruz_privado.svg'}];
+const GVIS=GRUPOS.map(()=>true);
 const capas={
  sus:capaSimbolo({data:SUS,ai:6,pane:'pSus',icon:ico('iconos/sus.svg',34),color:'#611232',dotR:5,minZoom:11,ctx:'SUS',off:[0,-14],
    tip:d=>`<b>${esc(d[3])}</b><br>${esc(d[2])} · ${esc(d[4])}<br><i>Consultorio SUS</i>`}),
- ce:capaSimbolo({data:CE,ai:8,pane:'pCE',icon:ico('iconos/cruz.svg',18),color:'#c80000',dotR:2.8,minZoom:14,ctx:'Consulta externa',off:[0,-8],
+ ce:capaSimbolo({data:CE,ai:8,pane:'pCE',icon:d=>GRUPOS[d[9]].icon,color:d=>GRUPOS[d[9]].color,dotR:d=>d[9]===4?2:2.8,vis:d=>GVIS[d[9]],minZoom:14,ctx:'Consulta externa',off:[0,-8],
    tip:d=>`<b>${esc(d[3])}</b><br>${esc(d[4])}<br>${esc(d[5])} · ${esc(d[6])}`}),
+ susi:capaSimbolo({data:SUSI,ai:6,pane:'pSus',icon:ico('iconos/sus_issste.svg',34),color:'#a57f2c',dotR:5,minZoom:11,ctx:'SUS ISSSTE',off:[0,-14],
+   tip:d=>`<b>${esc(d[3])}</b><br>${esc(d[4])}<br><i>Consultorio SUS ISSSTE</i>`,
+   pop:d=>`<b>${esc(d[3])}</b><br>${esc(d[4])}<br>${esc(d[5])}<br><i>Consultorio SUS ISSSTE</i><br><a href="${esc(d[7])}" target="_blank" rel="noopener">Abrir en Google Maps</a>`}),
  pil:capaSimbolo({data:PILARES,ai:5,pane:'pPil',icon:pilIcon,color:'#a57f2c',dotR:5,minZoom:12,ctx:'Pilar',off:[0,-11],
    tip:d=>`<b>Pilar ${esc(d[3])}</b><br>${esc(d[2])} · ${esc(d[4])}`,
    pop:d=>`<b>Pilar ${esc(d[3])}</b><br>${esc(d[2])} · ${esc(d[4])}<br><b>Estatus:</b> ${esc(d[6])}`})
 };
-$('#n-sus').textContent=fmt(SUS.length);$('#n-ce').textContent=fmt(CE.length);$('#n-pil').textContent=fmt(PILARES.length);
+$('#n-susi').textContent=fmt(SUSI.length);$('#n-sus').textContent=fmt(SUS.length);$('#n-ce').textContent=fmt(CE.length);$('#n-pil').textContent=fmt(PILARES.length);
+(function(){
+  const cnt=GRUPOS.map(()=>0); CE.forEach(d=>cnt[d[9]]++);
+  $('#ce-grupos').innerHTML=GRUPOS.map((g,i)=>`<label class="row" style="padding:2px 0"><input type="checkbox" data-g="${i}" checked><span class="sym" style="width:20px"><img src="iconos/${g.img}" alt="" style="width:${i===4?11:18}px"></span><span style="font-size:13px">${g.n}</span><span class="n">${fmt(cnt[i])}</span></label>`).join('');
+  $('#ce-grupos').addEventListener('change',e=>{
+    const i=e.target.dataset.g; if(i===undefined) return; GVIS[+i]=e.target.checked; capas.ce.refresh();
+    if(ultimo) analizarCirculo(ultimo.d,ultimo.ctx); polys.forEach((v,l)=>actualizarPoligono(l));
+  });
+})();
 const refrescarPuntos=()=>Object.values(capas).forEach(c=>c.refresh());
 let tmr=null; map.on('moveend zoomend',()=>{clearTimeout(tmr);tmr=setTimeout(refrescarPuntos,60);});
 
@@ -309,7 +381,7 @@ function areaCentroide(ring){
 
 // ---------- estadísticas (siempre con todos los datos) ----------
 const VEL=4.8, FAC=1.3;   // caminata estimada: 4.8 km/h y factor de recorrido 1.3 sobre la línea recta
-function esCE(d){ return true; }
+function esCE(d){ return GVIS[d[9]]; }
 function analizar(pred,origen,areaM2){
   let pob=0,viv=0,nmz=0;
   for(const c of MZC){ if(pred(c[0],c[1])){pob+=c[2];viv+=c[3];nmz++;} }
@@ -320,15 +392,15 @@ function analizar(pred,origen,areaM2){
     if(pred(u[0],u[1])) ceIn.push(u);
     if(d>5 && d<bd){bd=d;best=u;}
   }
-  const susIn=SUS.filter(s=>pred(s[0],s[1])), pilIn=PILARES.filter(s=>s[6]==='En operación'&&pred(s[0],s[1]));
+  const susIn=SUS.filter(s=>pred(s[0],s[1])), issIn=SUSI.filter(s=>pred(s[0],s[1])), pilIn=PILARES.filter(s=>s[6]==='En operación'&&pred(s[0],s[1]));
   const vel=VEL, fac=FAC;
   const ruta=bd*fac, min=ruta/1000/vel*60;
-  return {pob,viv,nmz,ceIn,susIn,pilIn,best,bd,ruta,min,areaKm2:areaM2/1e6,vel,fac};
+  return {pob,viv,nmz,ceIn,susIn,issIn,pilIn,best,bd,ruta,min,areaKm2:areaM2/1e6,vel,fac};
 }
 function tarjeta(titulo,sub,r,extra){
   const dens=r.areaKm2>0?r.pob/r.areaKm2:0;
   const lista=(arr,fn)=>arr.length?`<details><summary>Ver lista (${arr.length})</summary><ul>${arr.slice(0,80).map(x=>`<li>${fn(x)}</li>`).join('')}${arr.length>80?'<li>…</li>':''}</ul></details>`:'';
-  const otros=extra&&extra.excluirSus?1:0;
+  const otros=extra&&extra.excluirSus?1:0, otrosI=extra&&extra.excluirIss?1:0;
   return `<div class="card"><h3><span>${titulo}</span><small>${sub}</small></h3>
    ${r.best?`<div class="hint" style="margin:0">Consulta externa más cercana</div>
    <div class="big">${Math.round(r.min)} min <span style="font-size:12px;font-weight:400;color:var(--muted)">caminando (est.)</span></div>
@@ -341,11 +413,12 @@ function tarjeta(titulo,sub,r,extra){
     <span>Densidad</span><b>${fmt(dens)} hab/km²</b>
     <span>Unidades de consulta externa</span><b>${fmt(r.ceIn.length)}</b>
     <span>Consultorios SUS${otros?' (otros)':''}</span><b>${fmt(r.susIn.length-otros)}</b>
+    <span>Consultorios SUS ISSSTE${otrosI?' (otros)':''}</span><b>${fmt(r.issIn.length-otrosI)}</b>
     <span>Pilares en operación</span><b>${fmt(r.pilIn.length)}</b>
     <span>Población por unidad de c. externa</span><b>${r.ceIn.length?fmt(r.pob/r.ceIn.length):'—'}</b>
    </div>
    ${lista(r.ceIn,u=>`${esc(u[3])} <small>(${u[5]==='DE CONSULTA EXTERNA'?'C. externa':'Hospitalización'})</small>`)}
-   <div class="est">Caminata estimada a ${r.vel} km/h con factor ${r.fac}. Población: manzanas cuyo punto representativo cae dentro de la zona.</div></div>`;
+   <div class="est">Caminata estimada a ${r.vel} km/h con factor ${r.fac}. Unidades de consulta externa: solo las instituciones marcadas. Población: manzanas cuyo punto representativo cae dentro de la zona.</div></div>`;
 }
 
 // ---------- círculo ----------
@@ -358,7 +431,7 @@ function analizarCirculo(d,ctx){
   const r=analizar((x,y)=>dist(lat,lon,y,x)<=radio,{lat,lon},Math.PI*radio*radio);
   if(r.best) lineaCE=L.polyline([[lat,lon],[r.best[1],r.best[0]]],{color:'#1e5b4f',weight:3,dashArray:'6 5',interactive:false}).addTo(map);
   const nom=ctx==='Pilar'?'Pilar '+d[3]:d[3];
-  $('#circleCard').innerHTML=tarjeta('Círculo de '+fmt1(radio/1000)+' km',esc(ctx)+': '+esc(nom),r,{excluirSus:ctx==='SUS'});
+  $('#circleCard').innerHTML=tarjeta('Círculo de '+fmt1(radio/1000)+' km',esc(ctx)+': '+esc(nom),r,{excluirSus:ctx==='SUS',excluirIss:ctx==='SUS ISSSTE'});
   map.fitBounds(circ.getBounds(),{padding:[30,30],maxZoom:15});
 }
 // ---------- polígonos dibujados ----------
@@ -385,15 +458,17 @@ map.on('pm:create',e=>{
 
 // ---------- UI ----------
 function vacio(){ $('#emptyMsg').style.display=(circ||polys.size)?'none':''; }
-[['#chk-sus','sus'],['#chk-ce','ce'],['#chk-pil','pil']].forEach(([id,k])=>{
+[['#chk-sus','sus'],['#chk-susi','susi'],['#chk-ce','ce'],['#chk-pil','pil']].forEach(([id,k])=>{
   const c=capas[k]; c.group.addTo(map);
   $(id).addEventListener('change',e=>{c.enabled=e.target.checked;c.refresh();});
 });
 $('#chk-mz').addEventListener('change',()=>actualizarManzanas());
 $('#chk-zon').addEventListener('change',actualizarZonas);
+$('#chk-sec').addEventListener('change',actualizarSecciones);
+$('#sec-op').addEventListener('input',e=>{secOp=e.target.value/100;Object.values(secItems).forEach(a=>a.forEach(([l])=>l.setStyle({fillOpacity:secOp})));});
 $('#zon-op').addEventListener('input',e=>{zonOp=e.target.value/100;zonLayers.forEach(([l,c])=>l.setStyle({fillOpacity:zonOp}));});
 $('#sel-alc').addEventListener('change',e=>{
-  ALCSEL=+e.target.value; leyenda(); refrescarPuntos(); actualizarManzanas(); actualizarZonas();
+  ALCSEL=+e.target.value; leyenda(); refrescarPuntos(); actualizarManzanas(); actualizarZonas(); leyendaSecciones(); actualizarSecciones();
   if(ALCSEL>=0){const b=ALCB[ALCSEL]; map.fitBounds([[b[0],b[1]],[b[2],b[3]]],{padding:[20,20]});}
   else map.fitBounds([[19.05,-99.37],[19.60,-98.93]]);
 });
@@ -407,7 +482,7 @@ $('#btn-clear').addEventListener('click',()=>{
   $('#circleCard').innerHTML=''; map.pm.getGeomanDrawLayers().forEach(l=>map.removeLayer(l)); polys.clear(); pintarPolis();});
 
 // ---------- arranque ----------
-calcBreaks(); leyenda(); refrescarPuntos(); mzRoot.addTo(map); actualizarManzanas(); actualizarZonas();
+calcBreaks(); leyenda(); refrescarPuntos(); mzRoot.addTo(map); secRoot.addTo(map); actualizarManzanas(); actualizarZonas(); leyendaSecciones();
 })();
 </script>
 </body>
